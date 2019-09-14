@@ -27,16 +27,24 @@ public:
 		_tex[4].color = _colour;
 	}
 
-	float width() const {
+	float width() const noexcept {
 		return _width;
 	}
 
-	float height() const {
+	float height() const noexcept {
 		return _height;
 	}
 
-	sf::Color colour() const {
+	sf::Color colour() const noexcept {
 		return _colour;
+	}
+
+	void setOccupied() {
+		_tex.setPrimitiveType(sf::Quads);
+	}
+
+	void setVacant() {
+		_tex.setPrimitiveType(sf::LinesStrip);
 	}
 
 	void draw(sf::RenderTarget& target, sf::RenderStates states) const override {
@@ -44,30 +52,34 @@ public:
 	}
 };
 
-template<size_t H, size_t V>
 class Grid : public sf::Drawable {
+	size_t _horizontal, _vertical;
 	std::vector<Block> blocks;
 public:
-	Grid(sf::Vector2f pos, sf::Vector2u resolution) : blocks(H*V) {
-		Block starting_block(pos);
+	Grid(size_t horizontal, size_t vertical, sf::Vector2f pos, sf::Vector2u resolution) : 
+		_horizontal(horizontal),
+		_vertical(vertical),
+		blocks(horizontal * vertical) 
+	{
+		const auto starting_block = Block(pos);
 
-		float width = starting_block.width();
-		float height = starting_block.height();
+		const float width = starting_block.width();
+		const float height = starting_block.height();
 
 		blocks[0] = std::move(starting_block);
 		
-		auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / width));
-		auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / height));
+		const auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / width));
+		const auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / height));
 		
-		float first_x = pos.x;
+		const float first_x = pos.x;
 
 		pos.x += width;
 
 		size_t x = 1;
 		
-		for (size_t y = 0; y < std::min(max_blocks_vertical, V); y++) {
-			for (; x < std::min(max_blocks_horizontal, H); x++) {
-				blocks[x + y * H] = Block(pos);
+		for (size_t y = 0; y < std::min(max_blocks_vertical, vertical); y++) {
+			for (; x < std::min(max_blocks_horizontal, horizontal); x++) {
+				blocks[x + y * horizontal] = Block(pos);
 
 				pos.x += width;
 			}
@@ -83,21 +95,125 @@ public:
 			target.draw(block, states);
 		}
 	}
+
+	size_t horizontal() const noexcept {
+		return _horizontal;
+	}
+
+	size_t vertical() const noexcept {
+		return _vertical;
+	}
+
+	Block& at(sf::Vector2u pos) {
+		return blocks.at(pos.x + pos.y * horizontal());
+	}
+
+	Block const& at(sf::Vector2u pos) const {
+		return blocks.at(pos.x + pos.y * horizontal());
+	}
+
+	Block& operator[](sf::Vector2u pos) {
+		return blocks[pos.x + pos.y * horizontal()];
+	}
+
+	Block const& operator[](sf::Vector2u pos) const {
+		return blocks[pos.x + pos.y * horizontal()];
+	}
 };
+
+class Snake {
+	Grid& grid;
+
+	sf::Vector2u pos;
+
+	void assert(sf::Vector2u p) {
+		if (p.x >= grid.horizontal()) throw std::out_of_range("cannot move outside the grid horizontally");
+		if (p.y >= grid.vertical()) throw std::out_of_range("cannot move outside the grid vertically");
+	}
+public:
+	Snake(Grid& grid) : grid(grid), pos(0, 0) {
+		grid[pos].setOccupied();
+	}
+
+	void move(sf::Vector2i relative) {
+		grid[pos].setVacant();
+		
+
+		auto new_pos = sf::Vector2u(
+			static_cast<unsigned int>(static_cast<int>(pos.x) + relative.x), 
+			static_cast<unsigned int>(static_cast<int>(pos.y) + relative.y)
+		);
+
+		try {
+			assert(new_pos);
+		} catch (...) {
+			grid[pos].setOccupied();
+			throw;
+		}
+
+		pos = new_pos;
+
+		grid[pos].setOccupied();
+	}
+
+	void moveH(int x) {
+		move(sf::Vector2i(x, 0));
+	}
+
+	void moveV(int y) {
+		move(sf::Vector2i(0, y));
+	}
+
+	sf::Vector2u current_position() const noexcept {
+		return pos;
+	}
+};
+
+static const char* title = "Snek";
 
 int main()
 {
-	sf::RenderWindow window(sf::VideoMode(500, 400), "Snek");
+	auto window = sf::RenderWindow(sf::VideoMode(500, 400), title);
 
-	Grid<19, 15> grid(sf::Vector2f(12.f, 8.f), window.getSize());
+	auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
+	auto snake = Snake(grid);
 
 	while (window.isOpen())
 	{
-		sf::Event event;
+		auto event = sf::Event();
 		while (window.pollEvent(event))
 		{
-			if (event.type == sf::Event::Closed)
+			switch (event.type)
+			{
+			case sf::Event::Closed:
 				window.close();
+				break;
+			case sf::Event::KeyPressed:
+				try {
+					switch (event.key.code) {
+					case sf::Keyboard::Left:
+						snake.moveH(-1);
+						break;
+					case sf::Keyboard::Right:
+						snake.moveH(1);
+						break;
+					case sf::Keyboard::Up:
+						snake.moveV(-1);
+						break;
+					case sf::Keyboard::Down:
+						snake.moveV(1);
+						break;
+					default:
+						break;
+					}
+				} catch (std::out_of_range ex) {
+					window.setTitle(sf::String(title) + " : " + ex.what());
+				}
+
+				break;
+			default:
+				break;
+			}
 		}
 
 		window.clear(sf::Color::White);
