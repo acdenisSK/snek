@@ -12,8 +12,7 @@ public:
     Block() : _tex(sf::LinesStrip, 5) {}
 
     Block(sf::Vector2f starting_position) :
-        _tex(sf::LinesStrip, 5)
-    {
+        _tex(sf::LinesStrip, 5) {
         _tex[0].position = starting_position;
         _tex[1].position = sf::Vector2f(starting_position.x + _width, starting_position.y);
         _tex[2].position = starting_position + sf::Vector2f(_width, _height);
@@ -59,8 +58,7 @@ public:
     Grid(size_t horizontal, size_t vertical, sf::Vector2f pos, sf::Vector2u resolution) :
         _horizontal(horizontal),
         _vertical(vertical),
-        blocks(horizontal* vertical)
-    {
+        blocks(horizontal* vertical) {
         const auto starting_block = Block(pos);
 
         const float width = starting_block.width();
@@ -163,8 +161,7 @@ public:
 
 static const char* title = "Snek";
 
-int main()
-{
+int main() {
     auto window = sf::RenderWindow(sf::VideoMode(500, 400), title);
 
     auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
