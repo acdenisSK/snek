@@ -138,8 +138,7 @@ public:
 
         try {
             assert(new_pos);
-        }
-        catch (...) {
+        } catch (...) {
             grid[pos].setOccupied();
             throw;
         }
@@ -171,13 +170,10 @@ int main()
     auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
     auto snake = Snake(grid);
 
-    while (window.isOpen())
-    {
+    while (window.isOpen()) {
         auto event = sf::Event();
-        while (window.pollEvent(event))
-        {
-            switch (event.type)
-            {
+        while (window.pollEvent(event)) {
+            switch (event.type) {
             case sf::Event::Closed:
                 window.close();
                 break;
@@ -199,8 +195,7 @@ int main()
                     default:
                         break;
                     }
-                }
-                catch (std::out_of_range ex) {
+                } catch (std::out_of_range ex) {
                     window.setTitle(sf::String(title) + " : " + ex.what());
                 }
 
