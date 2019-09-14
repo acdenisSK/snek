@@ -1,9 +1,10 @@
 #include <SFML/Graphics.hpp>
-#include <array>
+#include <iostream>
+#include <vector>
 
 class Block : public sf::Drawable {
-	float _width = 50.f;
-	float _height = 50.f;
+	float _width = 25.f;
+	float _height = 25.f;
 	sf::Color _colour = sf::Color::Green;
 
 	sf::VertexArray _tex;
@@ -26,10 +27,6 @@ public:
 		_tex[4].color = _colour;
 	}
 
-	void draw(sf::RenderTarget& target, sf::RenderStates states) const override {
-		target.draw(_tex, states);
-	}
-
 	float width() const {
 		return _width;
 	}
@@ -42,16 +39,16 @@ public:
 		return _colour;
 	}
 
-	sf::Vector2f range() const {
-		return sf::Vector2f(_tex[1].position.x, _tex[3].position.y);
+	void draw(sf::RenderTarget& target, sf::RenderStates states) const override {
+		target.draw(_tex, states);
 	}
 };
 
-template<size_t N>
+template<size_t H, size_t V>
 class Grid : public sf::Drawable {
-	std::array<Block, N> blocks;
+	std::vector<Block> blocks;
 public:
-	Grid(sf::Vector2f pos) : blocks() {
+	Grid(sf::Vector2f pos, sf::Vector2u resolution) : blocks(H*V) {
 		Block starting_block(pos);
 
 		float width = starting_block.width();
@@ -59,10 +56,25 @@ public:
 
 		blocks[0] = std::move(starting_block);
 		
-		for (size_t i = 1; i < N; i++) {
-			pos.x += width;
+		auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / width));
+		auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / height));
+		
+		float first_x = pos.x;
 
-			blocks[i] = Block(pos);
+		pos.x += width;
+
+		size_t x = 1;
+		
+		for (size_t y = 0; y < std::min(max_blocks_vertical, V); y++) {
+			for (; x < std::min(max_blocks_horizontal, H); x++) {
+				blocks[x + y * H] = Block(pos);
+
+				pos.x += width;
+			}
+
+			x = 0;
+			pos.x = first_x;
+			pos.y += height;
 		}
 	}
 
@@ -76,8 +88,8 @@ public:
 int main()
 {
 	sf::RenderWindow window(sf::VideoMode(500, 400), "Snek");
-	
-	Grid<5> grid(sf::Vector2f(5.f, 5.f));
+
+	Grid<19, 15> grid(sf::Vector2f(12.f, 8.f), window.getSize());
 
 	while (window.isOpen())
 	{
