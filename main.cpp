@@ -2,7 +2,7 @@
 #include <exception>
 #include <vector>
 #include <random>
-#include <ctime>
+#include <tuple>
 
 static const float block_len = 25.f;
 
@@ -147,12 +147,37 @@ public:
     }
 };
 
+
 enum class Direction : uint8_t {
+    None,
     Left,
     Right,
     Up,
     Down,
 };
+
+std::tuple<int, int> to_pos(Direction direction) {
+    int x = 0, y = 0;
+
+    switch (direction) {
+    case Direction::Left:
+        x = -1;
+        break;
+    case Direction::Right:
+        x = 1;
+        break;
+    case Direction::Up:
+        y = -1;
+        break;
+    case Direction::Down:
+        y = 1;
+        break;
+    default:
+        break;
+    }
+
+    return std::make_tuple(x, y);
+}
 
 struct MotorException : public std::exception {
     char const* what() const noexcept override {
@@ -183,6 +208,18 @@ class Snake {
         if (p.y >= grid.vertical()) throw std::out_of_range("cannot move outside the grid vertically");
     }
 
+    void assert_direction(Direction direct) const {
+        if ((direct == Direction::Left && direction == Direction::Right)
+            || (direct == Direction::Right && direction == Direction::Left)) {
+            throw MotorException();
+        }
+
+        if ((direct == Direction::Up && direction == Direction::Down)
+            || (direct == Direction::Down && direction == Direction::Up)) {
+            throw MotorException();
+        }
+    }
+
     sf::Vector2u create_pos(sf::Vector2u pos, int x, int y) const {
         return sf::Vector2u(
             static_cast<unsigned int>(static_cast<int>(pos.x) + x),
@@ -198,23 +235,23 @@ class Snake {
         grid[pos].set_type(BlockType::OccupiedSnake);
     }
 
-    void move() {
-        int x = 0, y = 0;
+public:
+    Snake(Grid& grid) : grid(grid), positions(), direction() {
+        auto horizontal = randomiser::gen(0, grid.horizontal());
+        auto vertical = randomiser::gen(0, grid.vertical());
+        auto initial = sf::Vector2u(horizontal, vertical);
 
-        switch (direction) {
-        case Direction::Left:
-            x = -1;
-            break;
-        case Direction::Right:
-            x = 1;
-            break;
-        case Direction::Up:
-            y = -1;
-            break;
-        case Direction::Down:
-            y = 1;
-            break;
-        }
+        grid[initial].set_type(BlockType::OccupiedSnake);
+
+        positions.push_back(std::move(initial));
+    }
+
+    void move(Direction direct) {
+        assert_direction(direct);
+
+        auto [x, y] = to_pos(direct);
+
+        direction = direct;
 
         auto it = positions.begin(), end = positions.end();
 
@@ -227,12 +264,7 @@ class Snake {
 
         assert(new_pos);
 
-        if (auto& block = grid[new_pos]; block.is_fruit_occupied()) {
-            block.set_type(BlockType::Vacant);
-            block.set_color(sf::Color::Green);
-
-            add_body();
-        }
+        bool was_occupied_by_fruit = grid[new_pos].is_fruit_occupied();
 
         update_pos(head, new_pos);
 
@@ -245,48 +277,20 @@ class Snake {
 
             old_pos = before;
         }
-    }
-public:
-    Snake(Grid& grid) : grid(grid), positions(), direction(Direction::Right) {
-        auto horizontal = randomiser::gen(0, grid.horizontal());
-        auto vertical = randomiser::gen(0, grid.vertical());
-        auto initial = sf::Vector2u(horizontal, vertical);
 
-        grid[initial].set_type(BlockType::OccupiedSnake);
+        if (was_occupied_by_fruit) {
+            grid[new_pos].set_color(sf::Color::Green);
 
-        positions.push_back(std::move(initial));
-    }
-
-    void moveH(bool left) {
-        auto direct = left ? Direction::Left : Direction::Right;
-
-        if ((direct == Direction::Left && direction == Direction::Right)
-            || (direct == Direction::Right && direction == Direction::Left)) {
-            throw MotorException();
+            add_body();
         }
-
-        direction = direct;
-
-        move();
     }
 
-    void moveV(bool up) {
-        auto direct = up ? Direction::Up : Direction::Down;
-
-        if ((direct == Direction::Up && direction == Direction::Down)
-            || (direct == Direction::Down && direction == Direction::Up)) {
-            throw MotorException();
-        }
-
-        direction = direct;
-
-        move();
+    void move() {
+        move(direction);
     }
 
     void add_body() {
-        auto tail = current_position();
-
-        switch (direction) {
+        switch (auto tail = current_position(); direction) {
         case Direction::Left:
             positions.emplace_back(tail.x + 1, tail.y);
             break;
@@ -299,6 +303,8 @@ public:
         case Direction::Down:
             positions.emplace_back(tail.x, tail.y - 1);
             break;
+        default:
+            break;
         }
 
         grid[current_position()].set_type(BlockType::OccupiedSnake);
@@ -308,8 +314,6 @@ public:
         return positions.back();
     }
 };
-
-
 
 sf::Color gen_fruit_colour() {
     static const sf::Color fruit_colours[] = {
@@ -343,9 +347,6 @@ int main() {
     auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
     auto snake = Snake(grid);
 
-    spawn_fruit(grid);
-    spawn_fruit(grid);
-
     while (window.isOpen()) {
         auto event = sf::Event();
         while (window.pollEvent(event)) {
@@ -357,16 +358,16 @@ int main() {
                 try {
                     switch (event.key.code) {
                     case sf::Keyboard::Left:
-                        snake.moveH(true);
+                        snake.move(Direction::Left);
                         break;
                     case sf::Keyboard::Right:
-                        snake.moveH(false);
+                        snake.move(Direction::Right);
                         break;
                     case sf::Keyboard::Up:
-                        snake.moveV(true);
+                        snake.move(Direction::Up);
                         break;
                     case sf::Keyboard::Down:
-                        snake.moveV(false);
+                        snake.move(Direction::Down);
                         break;
                     default:
                         break;
