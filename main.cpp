@@ -1,11 +1,19 @@
 #include <SFML/Graphics.hpp>
 #include <exception>
 #include <vector>
+#include <random>
+#include <ctime>
 
-static float block_width = 25.f;
-static float block_height = 25.f;
+static const float block_len = 25.f;
+
+enum class BlockType : uint8_t {
+    Vacant,
+    OccupiedSnake,
+    OccupiedFruit,
+};
 
 class Block : public sf::Drawable {
+    BlockType _type = BlockType::Vacant;
     sf::Color _colour = sf::Color::Green;
 
     sf::VertexArray _tex;
@@ -15,9 +23,9 @@ public:
     explicit Block(sf::Vector2f starting_position) :
         _tex(sf::LinesStrip, 5) {
         _tex[0].position = starting_position;
-        _tex[1].position = sf::Vector2f(starting_position.x + block_width, starting_position.y);
-        _tex[2].position = starting_position + sf::Vector2f(block_width, block_height);
-        _tex[3].position = sf::Vector2f(starting_position.x, starting_position.y + block_height);
+        _tex[1].position = sf::Vector2f(starting_position.x + block_len, starting_position.y);
+        _tex[2].position = starting_position + sf::Vector2f(block_len, block_len);
+        _tex[3].position = sf::Vector2f(starting_position.x, starting_position.y + block_len);
         _tex[4].position = starting_position;
 
         _tex[0].color = _colour;
@@ -27,16 +35,48 @@ public:
         _tex[4].color = _colour;
     }
 
+    BlockType type() const noexcept {
+        return _type;
+    }
+
+    bool is_snake_occupied() const noexcept {
+        return _type == BlockType::OccupiedSnake;
+    }
+
+    bool is_fruit_occupied() const noexcept {
+        return _type == BlockType::OccupiedFruit;
+    }
+
+    bool is_occupied() const noexcept {
+        return is_snake_occupied() || is_fruit_occupied();
+    }
+
+    bool is_vacant() const noexcept {
+        return _type == BlockType::Vacant;
+    }
+
     sf::Color colour() const noexcept {
         return _colour;
     }
 
-    void setOccupied() {
-        _tex.setPrimitiveType(sf::Quads);
+    void set_color(sf::Color colour) {
+        for (size_t i = 0; i < _tex.getVertexCount(); i++) {
+            _tex[i].color = colour;
+        }
     }
 
-    void setVacant() {
-        _tex.setPrimitiveType(sf::LinesStrip);
+    void set_type(BlockType type) {
+        switch (type) {
+        case BlockType::Vacant:
+            _tex.setPrimitiveType(sf::LinesStrip);
+            break;
+        case BlockType::OccupiedSnake:
+        case BlockType::OccupiedFruit:
+            _tex.setPrimitiveType(sf::Quads);
+            break;
+        }
+
+        _type = type;
     }
 
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override {
@@ -47,14 +87,15 @@ public:
 class Grid : public sf::Drawable {
     size_t _horizontal, _vertical;
     std::vector<Block> blocks;
+
 public:
     Grid(size_t horizontal, size_t vertical, sf::Vector2f pos, sf::Vector2u resolution) :
         _horizontal(horizontal),
         _vertical(vertical),
         blocks(horizontal* vertical) {
 
-        const auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / block_width));
-        const auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / block_height));
+        const auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / block_len));
+        const auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / block_len));
 
         const float first_x = pos.x;
 
@@ -62,12 +103,12 @@ public:
             for (; x < std::min(max_blocks_horizontal, horizontal); x++) {
                 blocks[x + y * horizontal] = Block(pos);
 
-                pos.x += block_width;
+                pos.x += block_len;
             }
 
             x = 0;
             pos.x = first_x;
-            pos.y += block_height;
+            pos.y += block_len;
         }
     }
 
@@ -85,12 +126,24 @@ public:
         return _vertical;
     }
 
+    size_t len() const noexcept {
+        return blocks.size();
+    }
+
     Block& operator[](sf::Vector2u pos) {
         return blocks[pos.x + pos.y * horizontal()];
     }
 
     Block const& operator[](sf::Vector2u pos) const {
         return blocks[pos.x + pos.y * horizontal()];
+    }
+
+    Block& operator[](size_t pos) noexcept {
+        return blocks[pos];
+    }
+
+    Block const& operator[](size_t pos) const noexcept {
+        return blocks[pos];
     }
 };
 
@@ -101,16 +154,22 @@ enum class Direction : uint8_t {
     Down,
 };
 
-class MotorException : public std::exception {
-    char const* message;
-public:
-    MotorException() = delete;
-    explicit MotorException(char const* message) : message(message) {}
-
+struct MotorException : public std::exception {
     char const* what() const noexcept override {
-        return message;
+        return "cannot turn the opposite direction";
     }
 };
+
+namespace randomiser
+{
+    static std::random_device source;
+    static std::mt19937 generator(source());
+
+    size_t gen(size_t min, size_t max) {
+        auto dist = std::uniform_int_distribution<size_t>(min, max);
+        return dist(generator);
+    }
+}
 
 class Snake {
     Grid& grid;
@@ -119,12 +178,12 @@ class Snake {
 
     Direction direction;
 
-    void assert(sf::Vector2u p) {
+    void assert(sf::Vector2u p) const {
         if (p.x >= grid.horizontal()) throw std::out_of_range("cannot move outside the grid horizontally");
         if (p.y >= grid.vertical()) throw std::out_of_range("cannot move outside the grid vertically");
     }
 
-    sf::Vector2u create_pos(sf::Vector2u pos, int x, int y) {
+    sf::Vector2u create_pos(sf::Vector2u pos, int x, int y) const {
         return sf::Vector2u(
             static_cast<unsigned int>(static_cast<int>(pos.x) + x),
             static_cast<unsigned int>(static_cast<int>(pos.y) + y)
@@ -132,14 +191,31 @@ class Snake {
     }
 
     void update_pos(sf::Vector2u& pos, sf::Vector2u new_pos) {
-        grid[pos].setVacant();
+        grid[pos].set_type(BlockType::Vacant);
 
         pos = new_pos;
 
-        grid[pos].setOccupied();
+        grid[pos].set_type(BlockType::OccupiedSnake);
     }
 
-    void move(int x, int y) {
+    void move() {
+        int x = 0, y = 0;
+
+        switch (direction) {
+        case Direction::Left:
+            x = -1;
+            break;
+        case Direction::Right:
+            x = 1;
+            break;
+        case Direction::Up:
+            y = -1;
+            break;
+        case Direction::Down:
+            y = 1;
+            break;
+        }
+
         auto it = positions.begin(), end = positions.end();
 
         auto& head = *it;
@@ -150,6 +226,13 @@ class Snake {
         auto new_pos = create_pos(head, x, y);
 
         assert(new_pos);
+
+        if (auto& block = grid[new_pos]; block.is_fruit_occupied()) {
+            block.set_type(BlockType::Vacant);
+            block.set_color(sf::Color::Green);
+
+            add_body();
+        }
 
         update_pos(head, new_pos);
 
@@ -165,39 +248,43 @@ class Snake {
     }
 public:
     Snake(Grid& grid) : grid(grid), positions(), direction(Direction::Right) {
-        positions.emplace_back(2, 0);
+        auto horizontal = randomiser::gen(0, grid.horizontal());
+        auto vertical = randomiser::gen(0, grid.vertical());
+        auto initial = sf::Vector2u(horizontal, vertical);
 
-        grid[positions[0]].setOccupied();
+        grid[initial].set_type(BlockType::OccupiedSnake);
+
+        positions.push_back(std::move(initial));
     }
 
-    void moveH(int x) {
-        auto direct = (0 < x) ? Direction::Left : Direction::Right;
+    void moveH(bool left) {
+        auto direct = left ? Direction::Left : Direction::Right;
 
         if ((direct == Direction::Left && direction == Direction::Right)
             || (direct == Direction::Right && direction == Direction::Left)) {
-            throw MotorException("cannot turn the opposite direction");
+            throw MotorException();
         }
 
         direction = direct;
 
-        move(x, 0);
+        move();
     }
 
-    void moveV(int y) {
-        auto direct = (0 < y) ? Direction::Up : Direction::Down;
+    void moveV(bool up) {
+        auto direct = up ? Direction::Up : Direction::Down;
 
         if ((direct == Direction::Up && direction == Direction::Down)
             || (direct == Direction::Down && direction == Direction::Up)) {
-            throw MotorException("cannot turn the opposite direction");
+            throw MotorException();
         }
 
         direction = direct;
 
-        move(0, y);
+        move();
     }
 
     void add_body() {
-        const auto& tail = positions.back();
+        auto tail = current_position();
 
         switch (direction) {
         case Direction::Left:
@@ -214,13 +301,39 @@ public:
             break;
         }
 
-        grid[positions.back()].setOccupied();
+        grid[current_position()].set_type(BlockType::OccupiedSnake);
     }
 
     sf::Vector2u current_position() const noexcept {
         return positions.back();
     }
 };
+
+
+
+sf::Color gen_fruit_colour() {
+    static const sf::Color fruit_colours[] = {
+        sf::Color::Yellow,
+        sf::Color::Red,
+        sf::Color::Blue,
+        sf::Color::Color(0xFF, 0xA5, 0x00), // Orange
+    };
+
+    return fruit_colours[randomiser::gen(0, 3)];
+}
+
+void spawn_fruit(Grid& grid) {
+    size_t pos;
+
+    do {
+        pos = randomiser::gen(0, grid.len() - 1);
+    } while (grid[pos].is_occupied());
+
+    auto& block = grid[pos];
+
+    block.set_type(BlockType::OccupiedFruit);
+    block.set_color(gen_fruit_colour());
+}
 
 static char const* title = "Snek";
 
@@ -229,8 +342,9 @@ int main() {
 
     auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
     auto snake = Snake(grid);
-    snake.add_body();
-    snake.add_body();
+
+    spawn_fruit(grid);
+    spawn_fruit(grid);
 
     while (window.isOpen()) {
         auto event = sf::Event();
@@ -243,16 +357,16 @@ int main() {
                 try {
                     switch (event.key.code) {
                     case sf::Keyboard::Left:
-                        snake.moveH(-1);
+                        snake.moveH(true);
                         break;
                     case sf::Keyboard::Right:
-                        snake.moveH(1);
+                        snake.moveH(false);
                         break;
                     case sf::Keyboard::Up:
-                        snake.moveV(-1);
+                        snake.moveV(true);
                         break;
                     case sf::Keyboard::Down:
-                        snake.moveV(1);
+                        snake.moveV(false);
                         break;
                     default:
                         break;
