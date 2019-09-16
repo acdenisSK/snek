@@ -3,8 +3,12 @@
 #include <vector>
 #include <random>
 #include <tuple>
+#include <chrono>
+#include <thread>
 
 static const float block_len = 25.f;
+
+using uint = unsigned int;
 
 enum class BlockType : uint8_t {
     Vacant,
@@ -94,8 +98,8 @@ public:
         _vertical(vertical),
         blocks(horizontal* vertical) {
 
-        const auto max_blocks_horizontal = static_cast<size_t>(std::floor(static_cast<float>(resolution.x - pos.x) / block_len));
-        const auto max_blocks_vertical = static_cast<size_t>(std::floor(static_cast<float>(resolution.y - pos.y) / block_len));
+        const auto max_blocks_horizontal = size_t(std::floor(float(resolution.x - pos.x) / block_len));
+        const auto max_blocks_vertical = size_t(std::floor(float(resolution.y - pos.y) / block_len));
 
         const float first_x = pos.x;
 
@@ -147,6 +151,9 @@ public:
     }
 };
 
+sf::Vector2u operator+(sf::Vector2u lhs, sf::Vector2i rhs) {
+    return sf::Vector2u(uint(int(lhs.x) + rhs.x), uint(int(lhs.y) + rhs.y));
+}
 
 enum class Direction : uint8_t {
     None,
@@ -156,7 +163,7 @@ enum class Direction : uint8_t {
     Down,
 };
 
-std::tuple<int, int> to_pos(Direction direction) {
+sf::Vector2i to_pos(Direction direction) {
     int x = 0, y = 0;
 
     switch (direction) {
@@ -176,12 +183,18 @@ std::tuple<int, int> to_pos(Direction direction) {
         break;
     }
 
-    return std::make_tuple(x, y);
+    return sf::Vector2i(x, y);
 }
 
 struct MotorException : public std::exception {
     char const* what() const noexcept override {
         return "cannot turn the opposite direction";
+    }
+};
+
+struct CollisionException : public std::exception {
+    char const* what() const noexcept override {
+        return "collided with the snake's own body";
     }
 };
 
@@ -199,32 +212,28 @@ namespace randomiser
 class Snake {
     Grid& grid;
 
-    std::vector<sf::Vector2u> positions;
+    sf::Vector2u head_position;
+    std::vector<sf::Vector2u> body_positions;
 
-    Direction direction;
+    Direction _direction;
 
-    void assert(sf::Vector2u p) const {
-        if (p.x >= grid.horizontal()) throw std::out_of_range("cannot move outside the grid horizontally");
-        if (p.y >= grid.vertical()) throw std::out_of_range("cannot move outside the grid vertically");
+    void assert(sf::Vector2u pos) const {
+        if (pos.x >= grid.horizontal()) throw std::out_of_range("cannot move outside the grid horizontally");
+        if (pos.y >= grid.vertical()) throw std::out_of_range("cannot move outside the grid vertically");
+
+        if (grid[pos].is_snake_occupied()) throw CollisionException();
     }
 
     void assert_direction(Direction direct) const {
-        if ((direct == Direction::Left && direction == Direction::Right)
-            || (direct == Direction::Right && direction == Direction::Left)) {
+        if ((direct == Direction::Left && _direction == Direction::Right)
+            || (direct == Direction::Right && _direction == Direction::Left)) {
             throw MotorException();
         }
 
-        if ((direct == Direction::Up && direction == Direction::Down)
-            || (direct == Direction::Down && direction == Direction::Up)) {
+        if ((direct == Direction::Up && _direction == Direction::Down)
+            || (direct == Direction::Down && _direction == Direction::Up)) {
             throw MotorException();
         }
-    }
-
-    sf::Vector2u create_pos(sf::Vector2u pos, int x, int y) const {
-        return sf::Vector2u(
-            static_cast<unsigned int>(static_cast<int>(pos.x) + x),
-            static_cast<unsigned int>(static_cast<int>(pos.y) + y)
-        );
     }
 
     void update_pos(sf::Vector2u& pos, sf::Vector2u new_pos) {
@@ -236,41 +245,29 @@ class Snake {
     }
 
 public:
-    Snake(Grid& grid) : grid(grid), positions(), direction() {
+    Snake(Grid& grid) : grid(grid), head_position(), body_positions(), _direction(Direction::None) {
         auto horizontal = randomiser::gen(0, grid.horizontal());
         auto vertical = randomiser::gen(0, grid.vertical());
         auto initial = sf::Vector2u(horizontal, vertical);
 
         grid[initial].set_type(BlockType::OccupiedSnake);
 
-        positions.push_back(std::move(initial));
+        head_position = std::move(initial);
     }
 
-    void move(Direction direct) {
-        assert_direction(direct);
+    void move() {
+        auto pos = to_pos(_direction);
 
-        auto [x, y] = to_pos(direct);
-
-        direction = direct;
-
-        auto it = positions.begin(), end = positions.end();
-
-        auto& head = *it;
-
-        ++it;
-
-        auto old_pos = head;
-        auto new_pos = create_pos(head, x, y);
+        auto old_pos = head_position;
+        auto new_pos = head_position + pos;
 
         assert(new_pos);
 
         bool was_occupied_by_fruit = grid[new_pos].is_fruit_occupied();
 
-        update_pos(head, new_pos);
+        update_pos(head_position, new_pos);
 
-        for (; it < end; it++) {
-            auto& pos = *it;
-
+        for (auto& pos : body_positions) {
             auto before = pos;
 
             update_pos(pos, old_pos);
@@ -285,39 +282,44 @@ public:
         }
     }
 
-    void move() {
-        move(direction);
+    Direction direction() const noexcept {
+        return _direction;
+    }
+
+    void set_direction(Direction direct) {
+        assert_direction(direct);
+
+        _direction = direct;
     }
 
     void add_body() {
-        switch (auto tail = current_position(); direction) {
+        auto tail = body_positions.empty() ? head_position : body_positions.back();
+
+        switch (_direction) {
         case Direction::Left:
-            positions.emplace_back(tail.x + 1, tail.y);
+            tail.x += 1;
             break;
         case Direction::Right:
-            positions.emplace_back(tail.x - 1, tail.y);
+            tail.x -= 1;
             break;
         case Direction::Up:
-            positions.emplace_back(tail.x, tail.y + 1);
+            tail.y += 1;
             break;
         case Direction::Down:
-            positions.emplace_back(tail.x, tail.y - 1);
+            tail.y -= 1;
             break;
         default:
             break;
         }
 
-        grid[current_position()].set_type(BlockType::OccupiedSnake);
-    }
+        grid[tail].set_type(BlockType::OccupiedSnake);
 
-    sf::Vector2u current_position() const noexcept {
-        return positions.back();
+        body_positions.push_back(std::move(tail));
     }
 };
 
 sf::Color gen_fruit_colour() {
     static const sf::Color fruit_colours[] = {
-        sf::Color::Yellow,
         sf::Color::Red,
         sf::Color::Blue,
         sf::Color::Color(0xFF, 0xA5, 0x00), // Orange
@@ -341,11 +343,24 @@ void spawn_fruit(Grid& grid) {
 
 static char const* title = "Snek";
 
+enum class GameStates : uint8_t {
+    Start,
+    InProgress,
+    End,
+};
+
 int main() {
     auto window = sf::RenderWindow(sf::VideoMode(500, 400), title);
 
     auto grid = Grid(19, 15, sf::Vector2f(12.f, 8.f), window.getSize());
     auto snake = Snake(grid);
+
+    auto state = GameStates::Start;
+
+    auto clock = sf::Clock();
+
+    auto movement_seconds = 0.f;
+    auto spawn_seconds = 0.f;
 
     while (window.isOpen()) {
         auto event = sf::Event();
@@ -358,21 +373,21 @@ int main() {
                 try {
                     switch (event.key.code) {
                     case sf::Keyboard::Left:
-                        snake.move(Direction::Left);
+                        snake.set_direction(Direction::Left);
                         break;
                     case sf::Keyboard::Right:
-                        snake.move(Direction::Right);
+                        snake.set_direction(Direction::Right);
                         break;
                     case sf::Keyboard::Up:
-                        snake.move(Direction::Up);
+                        snake.set_direction(Direction::Up);
                         break;
                     case sf::Keyboard::Down:
-                        snake.move(Direction::Down);
+                        snake.set_direction(Direction::Down);
                         break;
                     default:
                         break;
                     }
-                } catch (std::exception const& ex) {
+                } catch (MotorException const& ex) {
                     window.setTitle(sf::String(title) + " : " + ex.what());
                 }
 
@@ -380,6 +395,46 @@ int main() {
             default:
                 break;
             }
+        }
+
+        switch (state) {
+        case GameStates::Start:
+            if (snake.direction() != Direction::None) {
+                state = GameStates::InProgress;
+            }
+
+            break;
+        case GameStates::InProgress:
+        {
+            float secs = clock.restart().asSeconds();
+
+            movement_seconds += secs;
+            spawn_seconds += secs;
+
+            if (spawn_seconds >= 5.f) {
+                spawn_fruit(grid);
+
+                spawn_seconds = 0.f;
+            }
+
+            if (movement_seconds >= 0.25f) {
+                try {
+                    snake.move();
+                } catch (std::out_of_range const& ex) {
+                    window.setTitle(sf::String(title) + " : " + ex.what() + "- over!");
+                    state = GameStates::End;
+                } catch (CollisionException const& ex) {
+                    window.setTitle(sf::String(title) + " : " + ex.what() + "- over!");
+                    state = GameStates::End;
+                }
+
+                movement_seconds = 0.f;
+            }
+
+            break;
+        }
+        case GameStates::End:
+            break;
         }
 
         window.clear(sf::Color::White);
