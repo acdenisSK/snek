@@ -1,0 +1,10 @@
+[package]
+name = "snek"
+version = "0.1.0"
+authors = ["Alex M. M. <acdenissk69@gmail.com>"]
+edition = "2018"
+
+[dependencies.sfml]
+version = "0.14"
+default-features = false
+features = ["graphics"]
