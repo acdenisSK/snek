@@ -14,17 +14,24 @@ mod block;
 
 use block::{Block, BlockType, BLOCK_LEN};
 
-static FRUIT_COLORS: [Color; 3] = [
-    Color::RED,
-    Color::BLUE,
-    // Orange.
-    Color {
-        r: 0xFF,
-        g: 0xA5,
-        b: 0x00,
-        a: 0x00,
-    },
-];
+#[inline]
+fn random_fruit_colour() -> Color {
+    static FRUIT_COLORS: [Color; 3] = [
+        Color::RED,
+        Color::BLUE,
+        // Orange.
+        Color {
+            r: 0xFF,
+            g: 0xA5,
+            b: 0x00,
+            a: 0x00,
+        },
+    ];
+
+    let index = rand::thread_rng().gen::<usize>() % FRUIT_COLORS.len();
+
+    FRUIT_COLORS[index]
+}
 
 #[derive(Debug, Clone)]
 struct Grid {
@@ -63,25 +70,23 @@ impl Grid {
         self.y
     }
 
+    #[inline]
+    fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
     fn spawn_fruit(&mut self) {
         let mut rng = rand::thread_rng();
-        let mut pos = rng.gen::<usize>() % self.blocks.len();
+        let mut pos = rng.gen::<usize>() % self.len();
 
         while self.blocks[pos].is_occupied() {
-            pos = rng.gen::<usize>() % self.blocks.len();
+            pos = rng.gen::<usize>() % self.len();
         }
 
         let block = &mut self.blocks[pos];
 
         block.set_type(BlockType::OccupiedFruit);
         block.set_colour(random_fruit_colour());
-
-        #[inline]
-        fn random_fruit_colour() -> Color {
-            let index = rand::thread_rng().gen::<usize>() % FRUIT_COLORS.len();
-
-            FRUIT_COLORS[index]
-        }
     }
 }
 
@@ -123,17 +128,20 @@ impl IndexMut<Vector2u> for Grid {
     }
 }
 
-#[inline]
-fn add_vectors(left: Vector2u, right: Vector2i) -> Vector2u {
-    Vector2u::new(
-        ((left.x as i32) + right.x) as u32,
-        ((left.y as i32) + right.y) as u32,
-    )
+impl Index<usize> for Grid {
+    type Output = Block;
+
+    #[inline]
+    fn index(&self, v: usize) -> &Self::Output {
+        &self.blocks[v]
+    }
 }
 
-#[inline]
-fn sub_vectors(left: Vector2u, right: Vector2i) -> Vector2u {
-    add_vectors(left, -right)
+impl IndexMut<usize> for Grid {
+    #[inline]
+    fn index_mut(&mut self, v: usize) -> &mut Self::Output {
+        &mut self.blocks[v]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -178,13 +186,16 @@ enum Direction {
 
 impl Direction {
     #[inline]
-    fn to_pos(&self) -> Vector2i {
+    fn to_pos(&self, horizontal: usize) -> isize {
         let (x, y) = match self {
             Direction::Horizontal(d) => (*d as i32, 0),
             Direction::Vertical(d) => (0, *d as i32),
         };
 
-        Vector2i::new(x, y)
+        let x = x as isize;
+        let y = y as isize;
+
+        x + y * horizontal as isize
     }
 
     #[inline]
@@ -215,19 +226,17 @@ impl fmt::Display for SnekError {
 
 impl Error for SnekError {}
 
+#[derive(Debug, Clone)]
 struct Snake {
-    head: Vector2u,
-    body: Vec<Vector2u>,
+    head: usize,
+    body: Vec<usize>,
     direction: Option<Direction>,
 }
 
 impl Snake {
     fn new(grid: &mut Grid) -> Self {
         let mut rng = rand::thread_rng();
-        let x = rng.gen::<usize>() % grid.horizontal();
-        let y = rng.gen::<usize>() % grid.vertical();
-
-        let pos = Vector2u::new(x as u32, y as u32);
+        let pos = rng.gen::<usize>() % grid.len();
 
         grid[pos].set_type(BlockType::OccupiedSnake);
 
@@ -239,14 +248,17 @@ impl Snake {
     }
 
     #[inline]
-    fn direction_pos(&self) -> Vector2i {
+    fn direction_pos(&self, horizontal: usize) -> isize {
         self.direction
             .as_ref()
-            .map_or(Vector2i::new(0, 0), |d| d.to_pos())
+            .map_or(0, |d| d.to_pos(horizontal))
     }
 
-    fn assert_position(&self, grid: &Grid, pos: Vector2u) -> Result<(), SnekError> {
-        if pos.x as usize >= grid.horizontal() || pos.y as usize >= grid.vertical() {
+    fn assert_position(&self, grid: &Grid, pos: usize) -> Result<(), SnekError> {
+        let x = dbg!(pos % grid.horizontal());
+        let y = dbg!(pos / grid.horizontal());
+
+        if x >= grid.horizontal() || y >= grid.vertical() {
             Err(SnekError::OutOfBounds)
         } else if grid[pos].kind == BlockType::OccupiedSnake {
             Err(SnekError::Collision)
@@ -268,7 +280,7 @@ impl Snake {
         }
     }
 
-    fn update_pos(grid: &mut Grid, old: &mut Vector2u, new: Vector2u) {
+    fn update_pos(grid: &mut Grid, old: &mut usize, new: usize) {
         grid[*old].set_type(BlockType::Vacant);
 
         *old = new;
@@ -277,10 +289,10 @@ impl Snake {
     }
 
     fn r#move(&mut self, grid: &mut Grid) -> Result<(), SnekError> {
-        let pos = self.direction_pos();
+        let i = self.direction_pos(grid.horizontal());
 
         let mut old_pos = self.head;
-        let new_pos = add_vectors(old_pos, pos);
+        let new_pos = (old_pos as isize + i) as usize;
 
         self.assert_position(&grid, new_pos)?;
 
@@ -312,7 +324,8 @@ impl Snake {
             *self.body.last().unwrap()
         };
 
-        tail = sub_vectors(tail, self.direction_pos());
+        let pos = self.direction_pos(grid.horizontal());
+        tail = (tail as isize - pos) as usize;
         grid[tail].set_type(BlockType::OccupiedSnake);
 
         self.body.push(tail);

@@ -28,7 +28,7 @@ impl Block {
         block.vertices[4].position = pos;
 
         block.vertices[0].color = block.colour;
-        block.vertices[2].color = block.colour;
+        block.vertices[1].color = block.colour;
         block.vertices[2].color = block.colour;
         block.vertices[3].color = block.colour;
         block.vertices[4].color = block.colour;
