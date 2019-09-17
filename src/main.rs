@@ -4,15 +4,20 @@ use sfml::graphics::*;
 use sfml::system::*;
 use sfml::window::*;
 
-use rand::{Rng, RngCore};
+use rand::Rng;
 
 use std::error::Error;
 use std::fmt;
 use std::ops::{Index, IndexMut};
 
+mod block;
+
+use block::{Block, BlockType, BLOCK_LEN};
+
 static FRUIT_COLORS: [Color; 3] = [
     Color::RED,
     Color::BLUE,
+    // Orange.
     Color {
         r: 0xFF,
         g: 0xA5,
@@ -20,84 +25,6 @@ static FRUIT_COLORS: [Color; 3] = [
         a: 0x00,
     },
 ];
-
-const BLOCK_LEN: f32 = 25.0;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BlockType {
-    Vacant,
-    OccupiedSnake,
-    OccupiedFruit,
-}
-
-#[derive(Debug, Clone)]
-struct Block {
-    pub kind: BlockType,
-    pub colour: Color,
-    vertices: VertexArray,
-}
-
-impl Block {
-    fn new(pos: Vector2f) -> Self {
-        let mut block = Self::default();
-
-        block.vertices[0].position = pos;
-        block.vertices[1].position = Vector2f::new(pos.x + BLOCK_LEN, pos.y);
-        block.vertices[2].position = pos + BLOCK_LEN;
-        block.vertices[3].position = Vector2f::new(pos.x, pos.y + BLOCK_LEN);
-        block.vertices[4].position = pos;
-
-        block.vertices[0].color = block.colour;
-        block.vertices[2].color = block.colour;
-        block.vertices[2].color = block.colour;
-        block.vertices[3].color = block.colour;
-        block.vertices[4].color = block.colour;
-
-        block
-    }
-
-    fn set_colour(&mut self, colour: Color) {
-        for i in 0..self.vertices.vertex_count() {
-            self.vertices[i].color = colour;
-        }
-    }
-
-    fn set_type(&mut self, kind: BlockType) {
-        match kind {
-            BlockType::Vacant => self.vertices.set_primitive_type(PrimitiveType::LineStrip),
-            BlockType::OccupiedSnake | BlockType::OccupiedFruit => {
-                self.vertices.set_primitive_type(PrimitiveType::Quads)
-            }
-        }
-    }
-
-    fn is_occupied(&self) -> bool {
-        match self.kind {
-            BlockType::OccupiedSnake | BlockType::OccupiedFruit => true,
-            BlockType::Vacant => false,
-        }
-    }
-}
-
-impl Default for Block {
-    fn default() -> Self {
-        Block {
-            kind: BlockType::Vacant,
-            colour: Color::GREEN,
-            vertices: VertexArray::new(PrimitiveType::LineStrip, 5),
-        }
-    }
-}
-
-impl Drawable for Block {
-    fn draw<'a: 'shader, 'texture, 'shader, 'shader_texture>(
-        &'a self,
-        target: &mut dyn RenderTarget,
-        states: RenderStates<'texture, 'shader, 'shader_texture>,
-    ) {
-        target.draw_vertex_array(&self.vertices, states);
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Grid {
@@ -136,14 +63,9 @@ impl Grid {
         self.y
     }
 
-    #[inline]
-    fn len(&self) -> usize {
-        self.blocks.len()
-    }
-
     fn spawn_fruit(&mut self) {
-        let mut pos = 0;
         let mut rng = rand::thread_rng();
+        let mut pos = rng.gen::<usize>() % self.blocks.len();
 
         while self.blocks[pos].is_occupied() {
             pos = rng.gen::<usize>() % self.blocks.len();
@@ -293,15 +215,14 @@ impl fmt::Display for SnekError {
 
 impl Error for SnekError {}
 
-struct Snake<'a> {
-    grid: &'a mut Grid,
+struct Snake {
     head: Vector2u,
     body: Vec<Vector2u>,
     direction: Option<Direction>,
 }
 
-impl<'a> Snake<'a> {
-    fn new(grid: &'a mut Grid) -> Self {
+impl Snake {
+    fn new(grid: &mut Grid) -> Self {
         let mut rng = rand::thread_rng();
         let x = rng.gen::<usize>() % grid.horizontal();
         let y = rng.gen::<usize>() % grid.vertical();
@@ -311,7 +232,6 @@ impl<'a> Snake<'a> {
         grid[pos].set_type(BlockType::OccupiedSnake);
 
         Self {
-            grid,
             head: pos,
             body: Vec::new(),
             direction: None,
@@ -325,10 +245,10 @@ impl<'a> Snake<'a> {
             .map_or(Vector2i::new(0, 0), |d| d.to_pos())
     }
 
-    fn assert_position(&self, pos: Vector2u) -> Result<(), SnekError> {
-        if pos.x as usize >= self.grid.horizontal() || pos.y as usize >= self.grid.vertical() {
+    fn assert_position(&self, grid: &Grid, pos: Vector2u) -> Result<(), SnekError> {
+        if pos.x as usize >= grid.horizontal() || pos.y as usize >= grid.vertical() {
             Err(SnekError::OutOfBounds)
-        } else if self.grid[pos].kind == BlockType::OccupiedSnake {
+        } else if grid[pos].kind == BlockType::OccupiedSnake {
             Err(SnekError::Collision)
         } else {
             Ok(())
@@ -356,36 +276,36 @@ impl<'a> Snake<'a> {
         grid[*old].set_type(BlockType::OccupiedSnake);
     }
 
-    fn r#move(&mut self) -> Result<(), SnekError> {
+    fn r#move(&mut self, grid: &mut Grid) -> Result<(), SnekError> {
         let pos = self.direction_pos();
 
         let mut old_pos = self.head;
         let new_pos = add_vectors(old_pos, pos);
 
-        self.assert_position(new_pos)?;
+        self.assert_position(&grid, new_pos)?;
 
-        let fruit_occupied = self.grid[new_pos].kind == BlockType::OccupiedFruit;
+        let fruit_occupied = grid[new_pos].kind == BlockType::OccupiedFruit;
 
-        Self::update_pos(self.grid, &mut self.head, new_pos);
+        Self::update_pos(grid, &mut self.head, new_pos);
 
         for pos in &mut self.body {
             let before = *pos;
 
-            Self::update_pos(self.grid, pos, old_pos);
+            Self::update_pos(grid, pos, old_pos);
 
             old_pos = before;
         }
 
         if fruit_occupied {
-            self.grid[new_pos].set_colour(Color::GREEN);
+            grid[new_pos].set_colour(Color::GREEN);
 
-            self.add_body();
+            self.add_body(grid);
         }
 
         Ok(())
     }
 
-    fn add_body(&mut self) {
+    fn add_body(&mut self, grid: &mut Grid) {
         let mut tail = if self.body.is_empty() {
             self.head
         } else {
@@ -393,7 +313,7 @@ impl<'a> Snake<'a> {
         };
 
         tail = sub_vectors(tail, self.direction_pos());
-        self.grid[tail].set_type(BlockType::OccupiedSnake);
+        grid[tail].set_type(BlockType::OccupiedSnake);
 
         self.body.push(tail);
     }
@@ -419,7 +339,8 @@ const TITLE: &str = "Snek";
 enum State {
     Start,
     InProgress,
-    End(SnekError),
+    Error(SnekError),
+    End,
 }
 
 fn main() {
@@ -439,14 +360,10 @@ fn main() {
     let mut movement_seconds = 0.0;
     let mut spawn_seconds = 0.0;
 
-    loop {
-        // events
+    while window.is_open() {
         while let Some(ev) = window.poll_event() {
             match ev {
-                Event::Closed => {
-                    window.close();
-                    return;
-                }
+                Event::Closed => window.close(),
                 Event::KeyPressed { code, .. } => {
                     let direction = match code {
                         Key::Left => Direction::Horizontal(HorizontalDirection::Left),
@@ -464,6 +381,11 @@ fn main() {
             }
         }
 
+        let seconds = clock.restart().as_seconds();
+
+        movement_seconds += seconds;
+        spawn_seconds += seconds;
+
         match state {
             State::Start => {
                 if snake.has_direction() {
@@ -471,11 +393,6 @@ fn main() {
                 }
             }
             State::InProgress => {
-                let seconds = clock.restart().as_seconds();
-
-                movement_seconds += seconds;
-                spawn_seconds += seconds;
-
                 if spawn_seconds >= 5.0 {
                     grid.spawn_fruit();
 
@@ -483,20 +400,23 @@ fn main() {
                 }
 
                 if movement_seconds >= 0.25 {
-                    if let Err(err) = snake.r#move() {
-                        state = State::End(err);
+                    if let Err(err) = snake.r#move(&mut grid) {
+                        state = State::Error(err);
                     }
 
                     movement_seconds = 0.0;
                 }
-
-                window.clear(&Color::WHITE);
-                window.draw(&grid);
-                window.display();
             }
-            State::End(err) => {
+            State::Error(err) => {
                 window.set_title(&format!("{}: {} - over!", TITLE, err));
+                state = State::End;
+                continue;
             }
+            State::End => {}
         }
+
+        window.clear(&Color::WHITE);
+        window.draw(&grid);
+        window.display();
     }
 }
