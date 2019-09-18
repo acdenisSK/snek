@@ -145,64 +145,31 @@ impl IndexMut<usize> for Grid {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(i32)]
-enum HorizontalDirection {
-    Left = -1,
-    Right = 1,
-}
-
-impl HorizontalDirection {
-    #[inline]
-    fn opposite(&self) -> Self {
-        match self {
-            HorizontalDirection::Left => HorizontalDirection::Right,
-            HorizontalDirection::Right => HorizontalDirection::Left,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(i32)]
-enum VerticalDirection {
-    Up = -1,
-    Down = 1,
-}
-
-impl VerticalDirection {
-    #[inline]
-    fn opposite(&self) -> Self {
-        match self {
-            VerticalDirection::Up => VerticalDirection::Down,
-            VerticalDirection::Down => VerticalDirection::Up,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 enum Direction {
-    Horizontal(HorizontalDirection),
-    Vertical(VerticalDirection),
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 impl Direction {
     #[inline]
-    fn to_pos(&self, horizontal: usize) -> isize {
-        let (x, y) = match self {
-            Direction::Horizontal(d) => (*d as i32, 0),
-            Direction::Vertical(d) => (0, *d as i32),
-        };
-
-        let x = x as isize;
-        let y = y as isize;
-
-        x + y * horizontal as isize
+    fn opposite(&self) -> Self {
+        match self {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+        }
     }
 
     #[inline]
-    fn opposite(&self) -> Self {
+    fn to_coords(&self) -> (isize, isize) {
         match self {
-            Direction::Horizontal(d) => Direction::Horizontal(d.opposite()),
-            Direction::Vertical(d) => Direction::Vertical(d.opposite()),
+            Direction::Left => (-1, 0),
+            Direction::Right => (1, 0),
+            Direction::Up => (0, -1),
+            Direction::Down => (0, 1),
         }
     }
 }
@@ -247,13 +214,6 @@ impl Snake {
         }
     }
 
-    #[inline]
-    fn direction_pos(&self, horizontal: usize) -> isize {
-        self.direction
-            .as_ref()
-            .map_or(0, |d| d.to_pos(horizontal))
-    }
-
     fn assert_position(&self, grid: &Grid, pos: usize) -> Result<(), SnekError> {
         let x = dbg!(pos % grid.horizontal());
         let y = dbg!(pos / grid.horizontal());
@@ -289,10 +249,10 @@ impl Snake {
     }
 
     fn r#move(&mut self, grid: &mut Grid) -> Result<(), SnekError> {
-        let i = self.direction_pos(grid.horizontal());
-
         let mut old_pos = self.head;
-        let new_pos = (old_pos as isize + i) as usize;
+        let (h, v) = self.direction.as_ref().map_or((0, 0), |d| d.to_coords());
+
+        let new_pos = ((old_pos as isize) + (h + v * grid.horizontal() as isize)) as usize;
 
         self.assert_position(&grid, new_pos)?;
 
@@ -324,8 +284,10 @@ impl Snake {
             *self.body.last().unwrap()
         };
 
-        let pos = self.direction_pos(grid.horizontal());
-        tail = (tail as isize - pos) as usize;
+        let (h, v) = self.direction.as_ref().map_or((0, 0), |d| d.to_coords());
+
+        tail -= (h + v * grid.horizontal() as isize) as usize;
+
         grid[tail].set_type(BlockType::OccupiedSnake);
 
         self.body.push(tail);
@@ -379,10 +341,10 @@ fn main() {
                 Event::Closed => window.close(),
                 Event::KeyPressed { code, .. } => {
                     let direction = match code {
-                        Key::Left => Direction::Horizontal(HorizontalDirection::Left),
-                        Key::Right => Direction::Horizontal(HorizontalDirection::Right),
-                        Key::Up => Direction::Vertical(VerticalDirection::Up),
-                        Key::Down => Direction::Vertical(VerticalDirection::Down),
+                        Key::Left => Direction::Left,
+                        Key::Right => Direction::Right,
+                        Key::Up => Direction::Up,
+                        Key::Down => Direction::Down,
                         _ => continue,
                     };
 
