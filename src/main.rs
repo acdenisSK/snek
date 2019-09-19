@@ -103,31 +103,6 @@ impl Drawable for Grid {
     }
 }
 
-#[inline]
-fn to_coords(v: Vector2u, horizontal: usize) -> usize {
-    let x = v.x as usize;
-    let y = v.y as usize;
-
-    x + y * horizontal
-}
-
-impl Index<Vector2u> for Grid {
-    type Output = Block;
-
-    #[inline]
-    fn index(&self, v: Vector2u) -> &Self::Output {
-        &self.blocks[to_coords(v, self.horizontal())]
-    }
-}
-
-impl IndexMut<Vector2u> for Grid {
-    #[inline]
-    fn index_mut(&mut self, v: Vector2u) -> &mut Self::Output {
-        let horizontal = self.horizontal();
-        &mut self.blocks[to_coords(v, horizontal)]
-    }
-}
-
 impl Index<usize> for Grid {
     type Output = Block;
 
@@ -214,19 +189,6 @@ impl Snake {
         }
     }
 
-    fn assert_position(&self, grid: &Grid, pos: usize) -> Result<(), SnekError> {
-        let x = dbg!(pos % grid.horizontal());
-        let y = dbg!(pos / grid.horizontal());
-
-        if x >= grid.horizontal() || y >= grid.vertical() {
-            Err(SnekError::OutOfBounds)
-        } else if grid[pos].kind == BlockType::OccupiedSnake {
-            Err(SnekError::Collision)
-        } else {
-            Ok(())
-        }
-    }
-
     fn assert_direction(&self, new_direction: Direction) -> Result<(), SnekError> {
         let direction = match self.direction {
             Some(d) => d,
@@ -250,11 +212,23 @@ impl Snake {
 
     fn r#move(&mut self, grid: &mut Grid) -> Result<(), SnekError> {
         let mut old_pos = self.head;
+        let x = old_pos % grid.horizontal();
+        let y = old_pos / grid.horizontal();
+
         let (h, v) = self.direction.as_ref().map_or((0, 0), |d| d.to_coords());
 
-        let new_pos = ((old_pos as isize) + (h + v * grid.horizontal() as isize)) as usize;
+        let x = (x as isize + h) as usize;
+        let y = (y as isize + v) as usize;
 
-        self.assert_position(&grid, new_pos)?;
+        if x >= grid.horizontal() || y >= grid.vertical() {
+            return Err(SnekError::OutOfBounds);
+        }
+
+        let new_pos = x + y * grid.horizontal();
+
+        if grid[new_pos].kind == BlockType::OccupiedSnake {
+            return Err(SnekError::Collision);
+        }
 
         let fruit_occupied = grid[new_pos].kind == BlockType::OccupiedFruit;
 
@@ -284,9 +258,15 @@ impl Snake {
             *self.body.last().unwrap()
         };
 
+        let x = tail % grid.horizontal();
+        let y = tail / grid.horizontal();
+
         let (h, v) = self.direction.as_ref().map_or((0, 0), |d| d.to_coords());
 
-        tail -= (h + v * grid.horizontal() as isize) as usize;
+        let x = (x as isize - h) as usize;
+        let y = (y as isize - v) as usize;
+
+        tail = x + y * grid.horizontal();
 
         grid[tail].set_type(BlockType::OccupiedSnake);
 

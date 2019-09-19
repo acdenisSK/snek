@@ -49,6 +49,8 @@ impl Block {
                 self.vertices.set_primitive_type(PrimitiveType::Quads)
             }
         }
+
+        self.kind = kind;
     }
 
     #[inline]
