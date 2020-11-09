@@ -7,4 +7,5 @@ project(
 executable(
   meson.project_name(), 'src/main.cpp',
   dependencies : [dependency('sfml-graphics')],
+  install : true,
 )
